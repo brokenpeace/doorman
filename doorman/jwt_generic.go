@@ -15,6 +15,9 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+// CACHE_TTL is the cache duration for remote info like OpenID config or keys.
+const CACHE_TTL = 1 * time.Hour
+
 // OpenIDConfiguration is the OpenID provider metadata about endpoints etc.
 type OpenIDConfiguration struct {
 	JWKSUri string `json:"jwks_uri"`
@@ -34,7 +37,7 @@ type jwtGenericValidator struct {
 
 // newJWTGenericValidator returns a generic JWT validator of this issuer.
 func newJWTGenericValidator(issuer string) *jwtGenericValidator {
-	cache, _ := bigcache.NewBigCache(bigcache.DefaultConfig(1 * time.Hour))
+	cache, _ := bigcache.NewBigCache(bigcache.DefaultConfig(CACHE_TTL))
 
 	var extractor ClaimExtractor = defaultExtractor
 	if strings.Contains(issuer, "mozilla.auth0.com") {
