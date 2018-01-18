@@ -61,7 +61,7 @@ func VerifyJWTMiddleware(doorman Doorman) gin.HandlerFunc {
 		}
 
 		// Check that origin matches audiences from JWT token .
-		if !claims.Audience.Contains(origin) {
+		if len(claims.Audience) > 0 && !claims.Audience.Contains(origin) {
 			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
 				"message": "Invalid audience claim",
 			})

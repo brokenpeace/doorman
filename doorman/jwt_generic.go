@@ -8,11 +8,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pkg/errors"
 	"github.com/allegro/bigcache"
+	"github.com/pkg/errors"
+	log "github.com/sirupsen/logrus"
 	jose "gopkg.in/square/go-jose.v2"
 	jwt "gopkg.in/square/go-jose.v2/jwt"
-	log "github.com/sirupsen/logrus"
 )
 
 // CACHE_TTL is the cache duration for remote info like OpenID config or keys.
@@ -20,12 +20,19 @@ const CACHE_TTL = 1 * time.Hour
 
 // OpenIDConfiguration is the OpenID provider metadata about endpoints etc.
 type OpenIDConfiguration struct {
-	JWKSUri string `json:"jwks_uri"`
+	JWKSUri          string `json:"jwks_uri"`
+	UserInfoEndpoint string `json:"userinfo_endpoint"`
 }
 
 // JWKS are the JWT public keys
 type JWKS struct {
 	Keys []jose.JSONWebKey `json:"keys"`
+}
+
+type UserInfo struct {
+	UserID string   `json:"sub"`
+	Email  string   `json:"email"`
+	Groups []string `json:"https://sso.mozilla.com/claim/groups"`
 }
 
 type jwtGenericValidator struct {
@@ -110,7 +117,51 @@ func (v *jwtGenericValidator) jwks() (*JWKS, error) {
 	return jwks, nil
 }
 
+func (v *jwtGenericValidator) FetchUserInfo(r *http.Request) (*UserInfo, error) {
+	authorizationHeader := r.Header.Get("Authorization")
+	accessToken := authorizationHeader[7:]
+	cacheKey := "userinfo:" + accessToken
+
+	data, err := v.cache.Get(cacheKey)
+	// Cache is empty or expired: fetch again.
+	if err != nil {
+		config, err := v.config()
+		if err != nil {
+			return nil, err
+		}
+		uri := config.UserInfoEndpoint
+		log.Debugf("Fetch user info from %s", uri)
+		client := &http.Client{}
+		req, _ := http.NewRequest("GET", uri, nil)
+		req.Header.Add("Authorization", authorizationHeader)
+		response, err := client.Do(req)
+		defer response.Body.Close()
+		data, err = ioutil.ReadAll(response.Body)
+		if err != nil {
+			return nil, errors.Wrap(err, "could not download JSON")
+		}
+		v.cache.Set(cacheKey, data)
+	}
+
+	var userInfo = &UserInfo{}
+	err = json.Unmarshal(data, userInfo)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to parse userinfo")
+	}
+	return userInfo, nil
+}
+
 func (v *jwtGenericValidator) ValidateRequest(r *http.Request) (*Claims, error) {
+	// Mega-WIP
+	ui, err := v.FetchUserInfo(r)
+	if err == nil {
+		return &Claims{
+			Subject: ui.UserID,
+			Email:   ui.Email,
+			Groups:  ui.Groups,
+		}, nil
+	}
+
 	// 1. Extract JWT from request headers
 	token, err := fromHeader(r)
 	if err != nil {
